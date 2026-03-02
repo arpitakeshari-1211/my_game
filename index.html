@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ninja Cloud Jumper</title>
+    <style>
+        body {
+            margin: 0; padding: 0; display: flex;
+            justify-content: center; align-items: center;
+            height: 100vh; background-color: #1a1a2e;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: white; flex-direction: column;
+        }
+        canvas {
+            background: linear-gradient(to bottom, #112233, #445566);
+            border: 6px solid #111; border-radius: 10px;
+            box-shadow: 0 0 30px rgba(0, 200, 255, 0.3); cursor: pointer;
+        }
+        p { margin-top: 10px; color: #ccc; }
+    </style>
+</head>
+<body>
+
+    <h2>Ninja Cloud Jumper: Arpita's Quest</h2>
+    <canvas id="gameCanvas" width="800" height="400"></canvas>
+    <p>Controls: <strong>Left/Right</strong> to Move | <strong>Up/Space</strong> to Jump (Double-tap in air!)</p>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        // Global Game State
+        let gameState = "START"; 
+        let score = 0;
+        let highScore = localStorage.getItem("ninjaHighScore") || 0; 
+        let currentLevel = 0;
+        let lives = 3;
+        
+        // Engine Variables
+        let cameraX = 0;
+        let walkTimer = 0; 
+        let frameCount = 0;
+        let tsunamiY = 500;
+        let tsunamiSpeed = 0;
+
+        // Entities
+        let player, clouds, coins, enemies, projectiles, particles, mountain;
+
+        // Level Designs
+        const levelData = [
+            { // LEVEL 1: The Basics & The Tsunami
+                tsunamiSpeed: 0.2, goal: { x: 2200, y: 150, w: 200, h: 250 },
+                clouds: [
+                    { x: 50, y: 300, w: 120, h: 20, type: "solid" },
+                    { x: 300, y: 250, w: 100, h: 20, type: "solid" },
+                    { x: 550, y: 200, w: 100, h: 20, type: "moving", speed: 2, minX: 450, maxX: 650 },
+                    { x: 850, y: 150, w: 100, h: 20, type: "solid" },
+                    { x: 1200, y: 200, w: 100, h: 20, type: "solid" },
+                    { x: 1500, y: 250, w: 100, h: 20, type: "solid" },
+                    { x: 1800, y: 200, w: 100, h: 20, type: "moving", speed: 3, minX: 1700, maxX: 1950 }
+                ],
+                coins: [{x: 350, y: 200}, {x: 900, y: 100}, {x: 1550, y: 180}],
+                enemies: []
+            },
+            { // LEVEL 2: Crumbling Skies & Patrolling Crows
+                tsunamiSpeed: 0.35, goal: { x: 2600, y: 150, w: 200, h: 250 },
+                clouds: [
+                    { x: 50, y: 300, w: 100, h: 20, type: "solid" },
+                    { x: 250, y: 250, w: 80, h: 20, type: "crumble", timer: 40 }, // Disappears FAST!
+                    { x: 450, y: 200, w: 80, h: 20, type: "crumble", timer: 40 },
+                    { x: 650, y: 150, w: 100, h: 20, type: "solid" },
+                    { x: 1000, y: 200, w: 100, h: 20, type: "moving", speed: 2, minX: 900, maxX: 1150 },
+                    { x: 1400, y: 150, w: 80, h: 20, type: "crumble", timer: 50 },
+                    { x: 1700, y: 250, w: 120, h: 20, type: "solid" },
+                    { x: 2100, y: 200, w: 80, h: 20, type: "crumble", timer: 30 },
+                    { x: 2350, y: 180, w: 80, h: 20, type: "solid" }
+                ],
+                coins: [{x: 680, y: 100}, {x: 1050, y: 100}, {x: 1750, y: 200}],
+                enemies: [
+                    { x: 700, y: 130, w: 20, h: 10, type: "patrol", speed: 3, minX: 600, maxX: 800 },
+                    { x: 1800, y: 230, w: 20, h: 10, type: "patrol", speed: 4, minX: 1650, maxX: 1900 }
+                ]
+            },
+            { // LEVEL 3: The Ambush (Shooting Enemies)
+                tsunamiSpeed: 0.45, goal: { x: 2800, y: 150, w: 200, h: 250 },
+                clouds: [
+                    { x: 50, y: 300, w: 100, h: 20, type: "solid" },
+                    { x: 300, y: 250, w: 100, h: 20, type: "moving", speed: 3, minX: 200, maxX: 400 },
+                    { x: 600, y: 200, w: 80, h: 20, type: "solid" },
+                    { x: 900, y: 150, w: 80, h: 20, type: "crumble", timer: 40 },
+                    { x: 1200, y: 200, w: 100, h: 20, type: "solid" }, // Shooter stands here
+                    { x: 1600, y: 250, w: 80, h: 20, type: "crumble", timer: 30 },
+                    { x: 1900, y: 200, w: 100, h: 20, type: "solid" }, // Shooter stands here
+                    { x: 2300, y: 150, w: 100, h: 20, type: "moving", speed: 4, minX: 2200, maxX: 2500 }
+                ],
+                coins: [{x: 640, y: 150}, {x: 1250, y: 100}, {x: 2350, y: 80}],
+                enemies: [
+                    { x: 1250, y: 160, w: 20, h: 40, type: "shooter", cooldown: 100, timer: 0 },
+                    { x: 1950, y: 160, w: 20, h: 40, type: "shooter", cooldown: 80, timer: 0 }
+                ]
+            }
+        ];
+
+        // Background Mountains
+        const bgMountains = [ 
+            { x: 0, y: 200, w: 300, h: 250 }, { x: 400, y: 150, w: 400, h: 300 },
+            { x: 900, y: 220, w: 350, h: 200 }, { x: 1500, y: 120, w: 500, h: 350 },
+            { x: 2100, y: 180, w: 400, h: 250 }, { x: 2600, y: 150, w: 300, h: 300 }
+        ];
+
+        // Text-to-Speech Sound
+        function playSound(text) {
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.volume = 0.8; utterance.rate = 1.3; 
+            window.speechSynthesis.speak(utterance);
+        }
+
+        // Input
+        const keys = { right: false, left: false };
+        window.addEventListener("keydown", (e) => {
+            if (e.code === "ArrowRight") keys.right = true;
+            if (e.code === "ArrowLeft") keys.left = true;
+            if ((e.code === "ArrowUp" || e.code === "Space") && gameState === "PLAYING") {
+                if (player.jumps < player.maxJumps) {
+                    player.dy = player.jumpPower; player.grounded = false; player.jumps++;
+                    createParticles(player.x + 10, player.y + 40, "white", 10);
+                }
+            }
+        });
+        window.addEventListener("keyup", (e) => {
+            if (e.code === "ArrowRight") keys.right = false;
+            if (e.code === "ArrowLeft") keys.left = false;
+        });
+
+        canvas.addEventListener("mousedown", () => {
+            if (gameState === "START" || gameState === "GAMEOVER" || gameState === "GAME_BEATEN") {
+                currentLevel = 0; score = 0; lives = 3;
+                loadLevel(currentLevel);
+                gameState = "PLAYING";
+                window.speechSynthesis.speak(new SpeechSynthesisUtterance("")); 
+            } else if (gameState === "LEVEL_WON") {
+                currentLevel++;
+                if (currentLevel >= levelData.length) {
+                    gameState = "GAME_BEATEN";
+                    playSound("hurray, Arpita! you beat the whole game! you are awesome!");
+                } else {
+                    loadLevel(currentLevel);
+                    gameState = "PLAYING";
+                }
+            }
+        });
+
+        function createParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                particles.push({ x: x, y: y, vx: (Math.random() - 0.5) * 6, vy: (Math.random() - 0.5) * 6, life: 1.0, color: color });
+            }
+        }
+
+        function loadLevel(index) {
+            let data = levelData[index];
+            player = { x: 50, y: 200, width: 20, height: 40, dx: 0, dy: 0, speed: 5, jumpPower: -10, gravity: 0.5, grounded: false, jumps: 0, maxJumps: 2 };
+            cameraX = 0; frameCount = 0; particles = []; projectiles = [];
+            tsunamiY = canvas.height + 100; // Starts below screen
+            tsunamiSpeed = data.tsunamiSpeed;
+            mountain = { ...data.goal };
+            
+            // Deep copy arrays so we don't modify the blueprint
+            clouds = JSON.parse(JSON.stringify(data.clouds));
+            clouds.forEach(c => { if(c.type === "crumble") c.steppedOn = false; });
+            coins = JSON.parse(JSON.stringify(data.coins)).map(c => ({...c, r: 10, collected: false}));
+            enemies = JSON.parse(JSON.stringify(data.enemies));
+        }
+
+        function die() {
+            lives--; playSound("oh no");
+            if (lives > 0) {
+                loadLevel(currentLevel); // Restart current level
+            } else {
+                gameState = "GAMEOVER"; // Out of lives
+            }
+        }
+
+        function update() {
+            if (gameState !== "PLAYING") return;
+            frameCount++;
+
+            // Move Player
+            if (keys.right) { player.x += player.speed; walkTimer++; }
+            if (keys.left) { player.x -= player.speed; walkTimer++; }
+            player.dy += player.gravity; player.y += player.dy;
+
+            // Tsunami Rising
+            tsunamiY -= tsunamiSpeed;
+            if (player.y + player.height > tsunamiY) die(); // Drown!
+            if (player.y > canvas.height + 200) die(); // Fell off map completely
+
+            // Cloud Collisions
+            player.grounded = false;
+            for (let i = clouds.length - 1; i >= 0; i--) {
+                let c = clouds[i];
+                if (c.type === "moving") {
+                    c.x += c.speed;
+                    if (c.x > c.maxX || c.x < c.minX) c.speed *= -1;
+                }
+                if (c.type === "crumble" && c.steppedOn) {
+                    c.timer--;
+                    if (c.timer <= 0) {
+                        createParticles(c.x + c.w/2, c.y, "gray", 20);
+                        clouds.splice(i, 1); // Delete cloud
+                        continue;
+                    }
+                }
+
+                // Check collision
+                if (player.dy >= 0 && player.x < c.x + c.w && player.x + player.width > c.x &&
+                    player.y + player.height >= c.y && player.y + player.height <= c.y + c.h + player.dy) {
+                        player.grounded = true; player.jumps = 0; player.dy = 0;
+                        player.y = c.y - player.height;
+                        if (c.type === "moving") player.x += c.speed; 
+                        if (c.type === "crumble") c.steppedOn = true; // Trigger crumbling
+                }
+            }
+
+            // Enemies & Projectiles
+            for (let e of enemies) {
+                if (e.type === "patrol") {
+                    e.x += e.speed;
+                    if (e.x > e.maxX || e.x < e.minX) e.speed *= -1;
+                } else if (e.type === "shooter") {
+                    e.timer++;
+                    if (e.timer >= e.cooldown) { // Shoot!
+                        e.timer = 0;
+                        projectiles.push({ x: e.x, y: e.y + 10, vx: -4, w: 10, h: 10 });
+                    }
+                }
+                // Hit enemy
+                if (player.x < e.x + e.w && player.x + player.width > e.x && player.y < e.y + e.h && player.y + player.height > e.y) die();
+            }
+
+            for (let p of projectiles) {
+                p.x += p.vx;
+                // Hit projectile
+                if (player.x < p.x + p.w && player.x + player.width > p.x && player.y < p.y + p.h && player.y + player.height > p.y) die();
+            }
+
+            // Coins
+            for (let coin of coins) {
+                if (!coin.collected && player.x < coin.x + coin.r && player.x + player.width > coin.x - coin.r &&
+                    player.y < coin.y + coin.r && player.y + player.height > coin.y - coin.r) {
+                        coin.collected = true; score += 50; playSound("yay");
+                        if (score > highScore) { highScore = score; localStorage.setItem("ninjaHighScore", highScore); }
+                        createParticles(coin.x, coin.y, "gold", 20);
+                }
+            }
+
+            // Particles
+            particles.forEach(p => { p.x += p.vx; p.y += p.vy; p.life -= 0.03; });
+            particles = particles.filter(p => p.life > 0);
+
+            // Level Complete
+            if (player.x + player.width > mountain.x && player.y + player.height > mountain.y) {
+                gameState = "LEVEL_WON"; playSound("level clear");
+            }
+
+            // Camera Follow
+            cameraX = player.x - 200;
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+            
+            // Parallax Background
+            ctx.fillStyle = "#2a3b4c"; 
+            for (let bg of bgMountains) {
+                ctx.beginPath();
+                ctx.moveTo(bg.x - (cameraX * 0.2), bg.y + bg.h);
+                ctx.lineTo(bg.x + (bg.w/2) - (cameraX * 0.2), bg.y);
+                ctx.lineTo(bg.x + bg.w - (cameraX * 0.2), bg.y + bg.h);
+                ctx.fill();
+            }
+
+            ctx.translate(-cameraX, 0); // Foreground Camera
+
+            // Draw Mountain Goal
+            ctx.fillStyle = "#2F4F4F"; ctx.fillRect(mountain.x, mountain.y, mountain.w, mountain.h);
+            ctx.fillStyle = "white"; ctx.beginPath();
+            ctx.moveTo(mountain.x, mountain.y); ctx.lineTo(mountain.x + mountain.w / 2, mountain.y - 100);
+            ctx.lineTo(mountain.x + mountain.w, mountain.y); ctx.fill();
+
+            // Draw Clouds
+            for (let c of clouds) {
+                if (c.type === "crumble") {
+                    // Shake effect if crumbling
+                    let shakeX = c.steppedOn ? (Math.random() - 0.5) * 4 : 0;
+                    ctx.fillStyle = c.steppedOn ? "#ff9999" : "#dddddd"; // Turns red when breaking
+                    ctx.beginPath(); ctx.roundRect(c.x + shakeX, c.y, c.w, c.h, 5); ctx.fill();
+                } else if (c.type === "moving") {
+                    ctx.fillStyle = "#87CEFA"; 
+                    ctx.beginPath(); ctx.roundRect(c.x, c.y, c.w, c.h, 10); ctx.fill();
+                } else {
+                    ctx.fillStyle = "white"; 
+                    ctx.beginPath(); ctx.roundRect(c.x, c.y, c.w, c.h, 10); ctx.fill();
+                }
+            }
+
+            // Draw Coins
+            for (let coin of coins) {
+                if (!coin.collected) {
+                    ctx.fillStyle = "#FFD700"; ctx.beginPath(); ctx.arc(coin.x, coin.y, coin.r, 0, Math.PI * 2); ctx.fill();
+                    ctx.fillStyle = "#DAA520"; ctx.beginPath(); ctx.arc(coin.x, coin.y, coin.r - 3, 0, Math.PI * 2); ctx.fill();
+                }
+            }
+
+            // Draw Enemies
+            for (let e of enemies) {
+                if (e.type === "patrol") { // Crow
+                    ctx.fillStyle = "black";
+                    ctx.beginPath(); ctx.moveTo(e.x, e.y);
+                    ctx.lineTo(e.x + 10, e.y + (frameCount % 10 < 5 ? 10 : -5));
+                    ctx.lineTo(e.x + 20, e.y); ctx.stroke();
+                    ctx.lineWidth = 3; ctx.strokeStyle = "black"; ctx.stroke();
+                } else if (e.type === "shooter") { // Red Ninja
+                    ctx.fillStyle = "#8B0000"; ctx.fillRect(e.x, e.y, e.w, e.h);
+                    ctx.fillStyle = "#FFCC99"; ctx.fillRect(e.x - 2, e.y + 5, 10, 6); // Face looking left
+                }
+            }
+
+            // Draw Projectiles (Shurikens)
+            ctx.fillStyle = "silver";
+            for (let p of projectiles) {
+                ctx.save(); ctx.translate(p.x + p.w/2, p.y + p.h/2);
+                ctx.rotate(frameCount * 0.5); // Spinning animation
+                ctx.fillRect(-p.w/2, -p.h/2, p.w, p.h);
+                ctx.restore();
+            }
+
+            // Draw Particles
+            for (let p of particles) {
+                ctx.fillStyle = p.color; ctx.globalAlpha = p.life;
+                ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI*2); ctx.fill();
+            }
+            ctx.globalAlpha = 1.0; 
+
+            // Draw Player Ninja
+            if (gameState !== "START") {
+                ctx.fillStyle = "#111"; ctx.fillRect(player.x, player.y, player.width, player.height);
+                ctx.fillStyle = "#FFCC99"; ctx.fillRect(player.x + (keys.left ? 0 : 5), player.y + 5, 15, 8); 
+                ctx.fillStyle = "red"; ctx.fillRect(player.x - 10, player.y + 5, 10, 3);
+                
+                let legOffset = (walkTimer % 10 < 5 && player.grounded && (keys.left || keys.right)) ? 5 : 0;
+                ctx.fillStyle = "#111";
+                ctx.fillRect(player.x + 2 - legOffset, player.y + 40, 6, 10); 
+                ctx.fillRect(player.x + 12 + legOffset, player.y + 40, 6, 10); 
+            }
+
+            // Draw Rising Tsunami (Draws over everything below its Y line)
+            ctx.fillStyle = "rgba(0, 105, 148, 0.85)"; 
+            // Wavy top edge
+            ctx.beginPath(); ctx.moveTo(cameraX, tsunamiY);
+            for (let i = 0; i <= canvas.width + 100; i += 50) {
+                ctx.lineTo(cameraX + i, tsunamiY + Math.sin((frameCount + i) * 0.05) * 10);
+            }
+            ctx.lineTo(cameraX + canvas.width + 100, canvas.height);
+            ctx.lineTo(cameraX, canvas.height); ctx.fill();
+
+            ctx.restore(); // Undo Camera
+
+            // Draw UI (Score & Lives)
+            ctx.fillStyle = "white"; ctx.font = "bold 20px 'Segoe UI'";
+            ctx.fillText("Score: " + score, 20, 30);
+            ctx.fillStyle = "#FFD700"; ctx.fillText("High Score: " + highScore, 20, 55);
+            ctx.fillStyle = "#ff4d4d"; ctx.font = "24px Arial";
+            ctx.fillText("Lives: " + "❤️".repeat(lives), 20, 85); // Displays Hearts
+            ctx.fillStyle = "white"; ctx.font = "bold 20px 'Segoe UI'";
+            ctx.fillText("Level: " + (currentLevel + 1), canvas.width - 100, 30);
+
+            // Overlay Screens
+            if (gameState !== "PLAYING") {
+                ctx.fillStyle = "rgba(0, 0, 0, 0.8)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.textAlign = "center";
+                
+                if (gameState === "START") {
+                    ctx.fillStyle = "white"; ctx.font = "bold 40px Arial"; ctx.fillText("NINJA CLOUD JUMPER", canvas.width/2, canvas.height/2 - 20);
+                    ctx.fillStyle = "yellow"; ctx.font = "20px Arial"; ctx.fillText("Click anywhere to start", canvas.width/2, canvas.height/2 + 20);
+                } else if (gameState === "GAMEOVER") {
+                    ctx.fillStyle = "red"; ctx.font = "bold 45px Arial"; ctx.fillText("GAME OVER", canvas.width/2, canvas.height/2 - 20);
+                    ctx.fillStyle = "white"; ctx.font = "20px Arial"; ctx.fillText("Click to Restart Game", canvas.width/2, canvas.height/2 + 20);
+                } else if (gameState === "LEVEL_WON") {
+                    ctx.fillStyle = "#32CD32"; ctx.font = "bold 45px Arial"; ctx.fillText("LEVEL " + (currentLevel + 1) + " CLEAR!", canvas.width/2, canvas.height/2 - 20);
+                    ctx.fillStyle = "white"; ctx.font = "20px Arial"; ctx.fillText("Click to start next level", canvas.width/2, canvas.height/2 + 20);
+                } else if (gameState === "GAME_BEATEN") {
+                    ctx.fillStyle = "#FFD700"; ctx.font = "bold 45px Arial"; ctx.fillText("ARPITA IS AWESOME!", canvas.width/2, canvas.height/2 - 20);
+                    ctx.fillStyle = "white"; ctx.font = "20px Arial"; ctx.fillText("You beat all the levels! Click to play again.", canvas.width/2, canvas.height/2 + 20);
+                }
+                ctx.textAlign = "left";
+            }
+        }
+
+        function loop() { update(); draw(); requestAnimationFrame(loop); }
+        loadLevel(0); loop(); 
+    </script>
+</body>
+</html>
