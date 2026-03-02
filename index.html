@@ -39,6 +39,16 @@
             touch-action: none; 
         }
 
+        /* Manual Restart Button */
+        #btnHardRestart {
+            position: absolute; top: 15px; right: 15px;
+            background: rgba(200, 0, 0, 0.8); color: white;
+            border: 2px solid white; border-radius: 8px;
+            padding: 8px 12px; font-weight: bold; font-size: 14px;
+            cursor: pointer; z-index: 100; box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        #btnHardRestart:active { background: rgba(255, 50, 50, 1); }
+
         #mobileControls {
             position: absolute; bottom: 20px; left: 0; width: 100%;
             display: flex; justify-content: space-between;
@@ -69,6 +79,7 @@
     </div>
 
     <div id="game-wrapper">
+        <button id="btnHardRestart">🔄 Restart Game</button>
         <canvas id="gameCanvas" width="800" height="400"></canvas>
         <div id="mobileControls">
             <div class="control-group">
@@ -87,13 +98,10 @@
         let highScore = parseInt(localStorage.getItem("ninjaHighScore")) || 0; 
         let score = parseInt(localStorage.getItem("ninjaScore")) || 0;
         let currentLevel = parseInt(localStorage.getItem("ninjaLevel")) || 0;
-        let lives = parseInt(localStorage.getItem("ninjaLives")) || 5;
-
-        // Failsafe: If the player reloads the page after dying completely, reset them.
-        if (lives <= 0 || currentLevel >= 3) {
-            score = 0; currentLevel = 0; lives = 5;
-            clearProgress();
-        }
+        
+        // Strictly enforce 5 lives on start
+        let lives = parseInt(localStorage.getItem("ninjaLives"));
+        if (isNaN(lives) || lives <= 0) lives = 5; 
 
         function saveProgress() {
             localStorage.setItem("ninjaScore", score);
@@ -110,12 +118,11 @@
 
         let gameState = "START"; 
         let cameraX = 0; let walkTimer = 0; let frameCount = 0;
-        let tsunamiY = 500; let tsunamiSpeed = 0;
         let player, clouds, coins, enemies, projectiles, particles, mountain;
 
         const levelData = [
             { // LEVEL 1
-                tsunamiSpeed: 0.2, goal: { x: 2200, y: 150, w: 200, h: 250 },
+                goal: { x: 2200, y: 150, w: 200, h: 250 },
                 clouds: [
                     { x: 50, y: 300, w: 120, h: 20, type: "solid" },
                     { x: 300, y: 250, w: 100, h: 20, type: "solid" },
@@ -129,7 +136,7 @@
                 enemies: []
             },
             { // LEVEL 2
-                tsunamiSpeed: 0.35, goal: { x: 2600, y: 150, w: 200, h: 250 },
+                goal: { x: 2600, y: 150, w: 200, h: 250 },
                 clouds: [
                     { x: 50, y: 300, w: 100, h: 20, type: "solid" },
                     { x: 250, y: 250, w: 80, h: 20, type: "crumble", timer: 40 }, 
@@ -148,7 +155,7 @@
                 ]
             },
             { // LEVEL 3
-                tsunamiSpeed: 0.45, goal: { x: 2800, y: 150, w: 200, h: 250 },
+                goal: { x: 2800, y: 150, w: 200, h: 250 },
                 clouds: [
                     { x: 50, y: 300, w: 100, h: 20, type: "solid" },
                     { x: 300, y: 250, w: 100, h: 20, type: "moving", speed: 3, minX: 200, maxX: 400 },
@@ -191,9 +198,33 @@
             if (e.code === "ArrowLeft") keys.left = false;
         });
 
+        // Setup UI Buttons
         const btnLeft = document.getElementById("btnLeft");
         const btnRight = document.getElementById("btnRight");
         const btnJump = document.getElementById("btnJump");
+        const btnHardRestart = document.getElementById("btnHardRestart");
+
+        // Mobile Manual Restart
+        btnHardRestart.addEventListener("touchstart", (e) => {
+            e.preventDefault(); e.stopPropagation();
+            triggerHardRestart();
+        });
+        // PC Manual Restart
+        btnHardRestart.addEventListener("click", (e) => {
+            e.stopPropagation();
+            triggerHardRestart();
+        });
+
+        function triggerHardRestart() {
+            if (confirm("Are you sure you want to wipe your progress and restart from Level 1?")) {
+                clearProgress();
+                currentLevel = 0;
+                score = 0;
+                lives = 5;
+                loadLevel(currentLevel);
+                gameState = "PLAYING";
+            }
+        }
 
         btnLeft.addEventListener("touchstart", (e) => { e.preventDefault(); keys.left = true; });
         btnLeft.addEventListener("touchend", (e) => { e.preventDefault(); keys.left = false; });
@@ -231,13 +262,19 @@
             attemptFullscreen();
             
             if (gameState === "START") {
-                // Starts at whatever level is saved in memory
                 loadLevel(currentLevel);
                 gameState = "PLAYING";
                 window.speechSynthesis.speak(new SpeechSynthesisUtterance("")); 
-            } else if (gameState === "GAMEOVER" || gameState === "GAME_BEATEN") {
+            } else if (gameState === "GAMEOVER") {
+                // Keep the level! Just reset lives and score for the retry.
+                lives = 5; 
+                score = 0;
+                saveProgress();
+                loadLevel(currentLevel);
+                gameState = "PLAYING";
+            } else if (gameState === "GAME_BEATEN") {
                 currentLevel = 0; score = 0; lives = 5; 
-                clearProgress(); // Wipes save file so you restart fully
+                clearProgress(); 
                 loadLevel(currentLevel);
                 gameState = "PLAYING";
             } else if (gameState === "LEVEL_WON") {
@@ -247,7 +284,7 @@
                     clearProgress(); // You beat it! Wipe save so you can play again.
                     playSound("hurrayyyy, Arpita! you beat the whole game! you are awesome!");
                 } else {
-                    saveProgress(); // Saves that you reached the next level!
+                    saveProgress(); 
                     loadLevel(currentLevel);
                     gameState = "PLAYING";
                 }
@@ -267,8 +304,6 @@
             let data = levelData[index];
             player = { x: 50, y: 200, width: 20, height: 40, dx: 0, dy: 0, speed: 5, jumpPower: -10, gravity: 0.5, grounded: false, jumps: 0, maxJumps: 2 };
             cameraX = 0; frameCount = 0; particles = []; projectiles = [];
-            tsunamiY = canvas.height + 100; 
-            tsunamiSpeed = data.tsunamiSpeed;
             mountain = { ...data.goal };
             clouds = JSON.parse(JSON.stringify(data.clouds));
             clouds.forEach(c => { if(c.type === "crumble") c.steppedOn = false; });
@@ -279,10 +314,11 @@
         function die() {
             lives--; playSound("oh no");
             if (lives > 0) {
-                saveProgress(); // Save that you lost a life
+                saveProgress(); 
                 loadLevel(currentLevel); 
             } else {
-                clearProgress(); // Wipe save on total Game Over
+                // Still keep current level saved!
+                saveProgress(); 
                 gameState = "GAMEOVER"; 
             }
         }
@@ -295,9 +331,8 @@
             if (keys.left) { player.x -= player.speed; walkTimer++; }
             player.dy += player.gravity; player.y += player.dy;
 
-            tsunamiY -= tsunamiSpeed;
-            if (player.y + player.height > tsunamiY) die(); 
-            if (player.y > canvas.height + 200) die(); 
+            // Fall off the map = death
+            if (player.y > canvas.height + 150) die(); 
 
             player.grounded = false;
             for (let i = clouds.length - 1; i >= 0; i--) {
@@ -348,7 +383,7 @@
                         coin.collected = true; score += 50; 
                         playSound("yay");
                         if (score > highScore) { highScore = score; localStorage.setItem("ninjaHighScore", highScore); }
-                        saveProgress(); // Save your new score!
+                        saveProgress(); 
                         createParticles(coin.x, coin.y, "gold", 20);
                 }
             }
@@ -442,14 +477,6 @@
                 ctx.fillRect(player.x + 12 + legOffset, player.y + 40, 6, 10); 
             }
 
-            ctx.fillStyle = "rgba(0, 105, 148, 0.85)"; 
-            ctx.beginPath(); ctx.moveTo(cameraX, tsunamiY);
-            for (let i = 0; i <= canvas.width + 100; i += 50) {
-                ctx.lineTo(cameraX + i, tsunamiY + Math.sin((frameCount + i) * 0.05) * 10);
-            }
-            ctx.lineTo(cameraX + canvas.width + 100, canvas.height);
-            ctx.lineTo(cameraX, canvas.height); ctx.fill();
-
             ctx.restore(); 
 
             let uiScale = canvas.width / 800; 
@@ -469,13 +496,11 @@
                 
                 if (gameState === "START") {
                     ctx.fillStyle = "white"; ctx.font = `bold ${40 * uiScale}px Arial`; ctx.fillText("NINJA CLOUD JUMPER", cx, cy - 20*uiScale);
-                    
-                    // Update text if we found a save file!
                     let startText = currentLevel > 0 ? `Tap to Resume Level ${currentLevel + 1}` : "Tap to start";
                     ctx.fillStyle = "yellow"; ctx.font = `${20 * uiScale}px Arial`; ctx.fillText(startText, cx, cy + 20*uiScale);
                 } else if (gameState === "GAMEOVER") {
-                    ctx.fillStyle = "red"; ctx.font = `bold ${45 * uiScale}px Arial`; ctx.fillText("GAME OVER", cx, cy - 20*uiScale);
-                    ctx.fillStyle = "white"; ctx.font = `${20 * uiScale}px Arial`; ctx.fillText("Tap to Restart", cx, cy + 20*uiScale);
+                    ctx.fillStyle = "red"; ctx.font = `bold ${45 * uiScale}px Arial`; ctx.fillText("OUT OF LIVES!", cx, cy - 20*uiScale);
+                    ctx.fillStyle = "white"; ctx.font = `${20 * uiScale}px Arial`; ctx.fillText(`Tap to Retry Level ${currentLevel + 1}`, cx, cy + 20*uiScale);
                 } else if (gameState === "LEVEL_WON") {
                     ctx.fillStyle = "#32CD32"; ctx.font = `bold ${45 * uiScale}px Arial`; ctx.fillText("LEVEL " + (currentLevel + 1) + " CLEAR!", cx, cy - 20*uiScale);
                     ctx.fillStyle = "white"; ctx.font = `${20 * uiScale}px Arial`; ctx.fillText("Tap for next level", cx, cy + 20*uiScale);
